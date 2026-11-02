@@ -1,5 +1,5 @@
 'use strict';
-const DB_NAME='food-menu-v1',STORE='foods',DEFAULTS={"Meal":["Breakfast","Brunch","Lunch","Dinner","Snack","Dessert"],"Source":["Home","Restaurant","Takeout/Delivery","Store-Bought"],"Cuisine":["American","Mexican","Italian","Chinese","Japanese","Thai","Indian","Mediterranean","Greek","Middle Eastern","Korean","Vietnamese","French","BBQ/Southern","Asian","Other"],"Protein":["Beef","Chicken","Pork","Turkey","Fish","Shellfish","Eggs","Tofu/Plant-Based","No Main Protein"],"Dish type":["Pasta","Pizza","Sandwich/Wrap","Burger","Tacos/Burritos","Soup/Stew","Salad","Rice/Grain Bowl","Casserole","Stir-Fry","Curry","Breakfast Dish","Side Dish","Appetizer","Baked Goods"],"Preparation":["Grilled","Smoked/BBQ","Baked/Roasted","Air-Fried","Fried","Slow-Cooked","One-Pot","No-Cook"],"Convenience":["Quick (under 30 min)","Meal Prep","Leftovers","Freezer-Friendly","Easy Cleanup"],"Dietary":["Vegetarian","Vegan","Dairy-Free","Gluten-Free","Low-Carb","High-Protein"]};
+const APP_VERSION='1.2',DB_NAME='food-menu-v1',STORE='foods',DEFAULTS={"Meal":["Breakfast","Brunch","Lunch","Dinner","Snack","Dessert"],"Source":["Home","Restaurant","Takeout/Delivery","Store-Bought"],"Cuisine":["American","Mexican","Italian","Chinese","Japanese","Thai","Indian","Mediterranean","Greek","Middle Eastern","Korean","Vietnamese","French","BBQ/Southern","Asian","Other"],"Protein":["Beef","Chicken","Pork","Turkey","Fish","Shellfish","Eggs","Tofu/Plant-Based","No Main Protein"],"Dish type":["Pasta","Pizza","Sandwich/Wrap","Burger","Tacos/Burritos","Soup/Stew","Salad","Rice/Grain Bowl","Casserole","Stir-Fry","Curry","Breakfast Dish","Side Dish","Appetizer","Baked Goods"],"Preparation":["Grilled","Smoked/BBQ","Baked/Roasted","Air-Fried","Fried","Slow-Cooked","One-Pot","No-Cook"],"Convenience":["Quick (under 30 min)","Meal Prep","Leftovers","Freezer-Friendly","Easy Cleanup"],"Dietary":["Vegetarian","Vegan","Dairy-Free","Gluten-Free","Low-Carb","High-Protein"]};
 const CATEGORY_KEYS=Object.keys(DEFAULTS),CUSTOM_KEY='food-menu-custom-categories-v1';
 let db,foods=[],editingId=null,pendingPhoto=null,filterOpen=false,onlyFavorites=false;
 let chosenFilters=Object.fromEntries(CATEGORY_KEYS.map(k=>[k,[]]));
@@ -33,4 +33,26 @@ $('foodForm').onsubmit=async e=>{e.preventDefault();const form=new FormData(e.ta
 $('deleteBtn').onclick=async()=>{if(!editingId||!confirm('Delete this food?'))return;await request('readwrite',s=>s.delete(editingId));$('editor').close();await reload()};
 $('exportBtn').onclick=()=>{const backup={format:'food-menu-backup',version:2,exportedAt:new Date().toISOString(),customCategories,foods};const blob=new Blob([JSON.stringify(backup)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='food-menu-backup-'+new Date().toISOString().slice(0,10)+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)};
 $('importFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const backup=JSON.parse(await file.text());if(backup.format!=='food-menu-backup'||![1,2].includes(backup.version)||!Array.isArray(backup.foods)||backup.foods.some(f=>!f||typeof f.id!=='string'||typeof f.name!=='string'||(f.photo!=null&&typeof f.photo!=='string')))throw Error('Not a valid Food Menu backup');if(!confirm('Replace your current '+foods.length+' foods with '+backup.foods.length+' foods from this backup?'))return;await new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite'),s=tx.objectStore(STORE);s.clear();for(const f of backup.foods)s.put(normalize(f));tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)});if(backup.version===2&&backup.customCategories&&typeof backup.customCategories==='object'){customCategories=backup.customCategories;saveCustom()}await reload();drawFilters();alert('Import complete')}catch(err){alert('Import failed: '+err.message)}finally{e.target.value=''}};
-(async()=>{try{loadCustom();db=await openDB();await reload();drawFilters()}catch(err){alert('Unable to open local storage: '+err.message)}if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{})})();
+async function checkForUpdate(manual=false){
+const status=$('updateStatus'),button=$('checkUpdateBtn');
+if(!navigator.onLine){status.textContent='Offline. Connect to the internet to check for updates.';return}
+button.disabled=true;status.textContent='Checking for updates…';
+try{
+const response=await fetch('./version.json?check='+Date.now(),{cache:'no-store'});
+if(!response.ok)throw Error('Version check unavailable');
+const remote=await response.json();
+if(remote.version!==APP_VERSION){
+status.textContent='Version '+remote.version+' available.';
+if(confirm('Food Menu '+remote.version+' is available. Install the update now? Your saved foods will be retained.')){
+if('serviceWorker' in navigator){const reg=await navigator.serviceWorker.getRegistration();if(reg)await reg.update()}
+const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('food-menu-')).map(k=>caches.delete(k)));
+location.replace('./?v='+encodeURIComponent(remote.version)+'&updated='+Date.now());
+}
+}else status.textContent='Up to date (v'+APP_VERSION+').';
+}catch(err){status.textContent='Could not check for updates. Try again while online.'}
+finally{button.disabled=false}
+}
+$('checkUpdateBtn').onclick=()=>checkForUpdate(true);
+window.addEventListener('online',()=>checkForUpdate(false));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkForUpdate(false)});
+(async()=>{try{loadCustom();db=await openDB();await reload();drawFilters()}catch(err){alert('Unable to open local storage: '+err.message)}if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});setTimeout(()=>checkForUpdate(false),1500)})();
